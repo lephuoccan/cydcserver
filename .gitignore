@@ -82,6 +82,7 @@ application-local.properties
 application-dev.properties
 application-prod.properties
 *-secrets.properties
+src/main/resources/application.properties
 
 # Logs
 logs/

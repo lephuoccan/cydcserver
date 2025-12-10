@@ -1,0 +1,16 @@
+# Server
+server.port=8080
+server.http.port=8081
+server.websocket.port=9001
+
+# Database (Postgres)
+# Copy this file to application.properties and update with your credentials
+db.url=jdbc:postgresql://localhost:5432/cydcserver
+db.user=postgres
+db.pass=your_password_here
+
+# Redis
+redis.uri=redis://localhost:6379
+
+# Raw data storage (for virtualWrite history)
+enable.raw.data.store=true
