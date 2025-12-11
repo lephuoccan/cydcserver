@@ -190,6 +190,7 @@ public class BlynkProtocolHandler extends SimpleChannelInboundHandler<BlynkMessa
             return;
         }
         
+        String userId = tokenInfo[0];
         String deviceId = tokenInfo[2];
         
         // Parse deviceId to long for VirtualPinService
@@ -233,7 +234,8 @@ public class BlynkProtocolHandler extends SimpleChannelInboundHandler<BlynkMessa
             }
             
             try {
-                pinService.setPinValue(devId, pinNum, value);
+                // Use broadcast version to queue for DB sync
+                pinService.setPinValueWithBroadcast(userId, deviceId, pinNum, value);
                 log.info("[Blynk] Virtual pin write: V{} = {}", pinNum, value);
                 sendResponse(ctx, msg.getMessageId(), BlynkProtocol.BLYNK_SUCCESS);
             } catch (Exception e) {

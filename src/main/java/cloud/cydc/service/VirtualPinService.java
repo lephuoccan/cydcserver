@@ -102,6 +102,15 @@ public class VirtualPinService {
         
         // Push to connected ESP32 via Blynk protocol
         BlynkProtocolHandler.sendHardwareCommand(devId, pinNum, value);
+        
+        // Queue để sync vào DB sau (batch write)
+        if (rawDataService != null && rawDataService.isEnabled()) {
+            PinUpdate update = new PinUpdate(userId, 0, devId, pinNum, value);
+            pendingWrites.computeIfAbsent(devId, k -> new ConcurrentLinkedQueue<>()).offer(update);
+            log.debug("Queued pin update for DB sync: device={}, pin=V{}, value={}", devId, pinNum, value);
+        }
+        
+        touchDeviceActivity(devId);
     }
 
     public void setPinValueWithBroadcastAndRawData(String userId, long dashId, long devId, int pinNum, String value) {
@@ -130,12 +139,16 @@ public class VirtualPinService {
             int totalSynced = 0;
             List<Long> emptyDevices = new ArrayList<>();
             
+            log.info("Starting pin data sync, pending devices: {}", pendingWrites.size());
+            
             for (Map.Entry<Long, Queue<PinUpdate>> entry : pendingWrites.entrySet()) {
                 Queue<PinUpdate> queue = entry.getValue();
                 if (queue.isEmpty()) {
                     emptyDevices.add(entry.getKey());
                     continue;
                 }
+                
+                log.info("Syncing device {} with {} pending updates", entry.getKey(), queue.size());
                 
                 // Batch sync tối đa SYNC_BATCH_SIZE records mỗi device
                 int count = 0;
@@ -151,8 +164,9 @@ public class VirtualPinService {
                         );
                         totalSynced++;
                         count++;
+                        log.debug("Stored to DB: device={}, pin=V{}, value={}", update.devId, update.pinNum, update.value);
                     } catch (Exception e) {
-                        log.error("Failed to sync pin data for device {}: {}", update.devId, e.getMessage());
+                        log.error("Failed to sync pin data for device {}: {}", update.devId, e.getMessage(), e);
                     }
                 }
             }
@@ -161,7 +175,7 @@ public class VirtualPinService {
             emptyDevices.forEach(pendingWrites::remove);
             
             if (totalSynced > 0) {
-                log.debug("Synced {} pin updates to database", totalSynced);
+                log.info("Successfully synced {} pin updates to database", totalSynced);
             }
         } catch (Exception e) {
             log.error("Error during pin data sync: {}", e.getMessage(), e);
