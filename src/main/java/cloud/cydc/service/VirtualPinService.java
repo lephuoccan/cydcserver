@@ -111,14 +111,18 @@ public class VirtualPinService {
     }
 
     public void setPinValueWithBroadcast(String userId, String deviceId, int pinNum, String value) {
+        setPinValueWithBroadcast(userId, deviceId, pinNum, value, -1L);
+    }
+    
+    public void setPinValueWithBroadcast(String userId, String deviceId, int pinNum, String value, long excludeDeviceId) {
         long devId = Long.parseLong(deviceId);
         setPinValue(devId, pinNum, value);
         
         // Broadcast pin update to all subscribed WebSocket clients
         WebSocketFrameHandler.broadcastPinUpdate(userId, deviceId, "V" + pinNum, value);
         
-        // Push to connected ESP32 via Blynk protocol
-        BlynkProtocolHandler.sendHardwareCommand(devId, pinNum, value);
+        // Push to connected ESP32 via Blynk protocol (skip source device to prevent echo loop)
+        BlynkProtocolHandler.sendHardwareCommand(devId, pinNum, value, excludeDeviceId);
         
         // Queue để sync vào DB sau (batch write)
         if (rawDataService != null && rawDataService.isEnabled()) {

@@ -40,6 +40,15 @@ public class BlynkProtocolHandler extends SimpleChannelInboundHandler<BlynkMessa
      * Send hardware command to connected ESP32
      */
     public static void sendHardwareCommand(long deviceId, int pin, String value) {
+        sendHardwareCommand(deviceId, pin, value, -1L);
+    }
+    
+    public static void sendHardwareCommand(long deviceId, int pin, String value, long excludeDeviceId) {
+        if (deviceId == excludeDeviceId) {
+            log.debug("[Blynk] Skip sending to source device {}: V{} = {}", deviceId, pin, value);
+            return;
+        }
+        
         ChannelHandlerContext ctx = activeConnections.get(deviceId);
         log.info("[Blynk] sendHardwareCommand called: deviceId={}, pin={}, value={}, ctx={}", 
                  deviceId, pin, value, ctx != null ? "found" : "NULL");
@@ -234,9 +243,9 @@ public class BlynkProtocolHandler extends SimpleChannelInboundHandler<BlynkMessa
             }
             
             try {
-                // Use broadcast version to queue for DB sync
-                pinService.setPinValueWithBroadcast(userId, deviceId, pinNum, value);
-                log.info("[Blynk] Virtual pin write: V{} = {}", pinNum, value);
+                // Use broadcast version to queue for DB sync (exclude source device to prevent echo)
+                pinService.setPinValueWithBroadcast(userId, deviceId, pinNum, value, devId);
+                log.info("[Blynk] Virtual pin write: V{} = {} (from device {})", pinNum, value, devId);
                 sendResponse(ctx, msg.getMessageId(), BlynkProtocol.BLYNK_SUCCESS);
             } catch (Exception e) {
                 log.error("[Blynk] Error setting pin value", e);
