@@ -25,12 +25,41 @@ public class BlynkProtocolHandler extends SimpleChannelInboundHandler<BlynkMessa
     // Track authenticated sessions
     private final Map<ChannelHandlerContext, String> authenticatedSessions = new ConcurrentHashMap<>();
     
+    // Track active connections by device ID
+    private static final Map<Long, ChannelHandlerContext> activeConnections = new ConcurrentHashMap<>();
+    
     public BlynkProtocolHandler(DeviceInfoService deviceService, 
                                  VirtualPinService pinService,
                                  TokenValidator tokenValidator) {
         this.deviceService = deviceService;
         this.pinService = pinService;
         this.tokenValidator = tokenValidator;
+    }
+    
+    /**
+     * Send hardware command to connected ESP32
+     */
+    public static void sendHardwareCommand(long deviceId, int pin, String value) {
+        ChannelHandlerContext ctx = activeConnections.get(deviceId);
+        log.info("[Blynk] sendHardwareCommand called: deviceId={}, pin={}, value={}, ctx={}", 
+                 deviceId, pin, value, ctx != null ? "found" : "NULL");
+        
+        if (ctx != null && ctx.channel().isActive()) {
+            // Format: vw\0<pin>\0<value> - same as hardware sends to server
+            String body = "vw\0" + pin + "\0" + value;
+            BlynkMessage msg = new BlynkMessage(
+                BlynkProtocol.BLYNK_CMD_HARDWARE,
+                1, // message ID (can be any - hardware will not check)
+                body.getBytes()
+            );
+            
+            log.info("[Blynk] Sending HARDWARE command to device {}: body='{}', bytes={}", 
+                     deviceId, body.replace("\0", "\\0"), body.getBytes().length);
+            ctx.writeAndFlush(msg);
+            log.info("[Blynk] Message sent successfully to device {}: V{} = {}", deviceId, pin, value);
+        } else {
+            log.warn("[Blynk] Device {} not connected or channel inactive", deviceId);
+        }
     }
     
     @Override
@@ -95,6 +124,19 @@ public class BlynkProtocolHandler extends SimpleChannelInboundHandler<BlynkMessa
         // Validate token
         if (tokenValidator.validateToken(token)) {
             authenticatedSessions.put(ctx, token);
+            
+            // Register active connection by device ID
+            String[] tokenInfo = tokenValidator.extractTokenInfo(token);
+            if (tokenInfo != null) {
+                try {
+                    long deviceId = Long.parseLong(tokenInfo[2]);
+                    activeConnections.put(deviceId, ctx);
+                    log.info("[Blynk] Device {} registered in active connections", deviceId);
+                } catch (NumberFormatException e) {
+                    log.error("[Blynk] Invalid device ID in token", e);
+                }
+            }
+            
             log.info("[Blynk] Login successful for token: {}", token);
             
             // Send OK response (status 200) like official Blynk server
@@ -283,6 +325,21 @@ public class BlynkProtocolHandler extends SimpleChannelInboundHandler<BlynkMessa
     @Override
     public void channelInactive(ChannelHandlerContext ctx) throws Exception {
         String token = authenticatedSessions.remove(ctx);
+        
+        // Remove from active connections
+        if (token != null) {
+            String[] tokenInfo = tokenValidator.extractTokenInfo(token);
+            if (tokenInfo != null) {
+                try {
+                    long deviceId = Long.parseLong(tokenInfo[2]);
+                    activeConnections.remove(deviceId);
+                    log.info("[Blynk] Device {} removed from active connections", deviceId);
+                } catch (NumberFormatException e) {
+                    // ignore
+                }
+            }
+        }
+        
         log.warn("[Blynk] Channel INACTIVE (client disconnected), was authenticated: {}, remote: {}", 
             token != null, ctx.channel().remoteAddress());
         super.channelInactive(ctx);

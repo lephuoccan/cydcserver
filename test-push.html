@@ -1,0 +1,40 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Test Blynk Push</title>
+    <meta charset="UTF-8">
+</head>
+<body>
+    <h1>Test Server-to-ESP32 Push</h1>
+    <p>Click button to send V5 = 999 to ESP32</p>
+    <button onclick="testPush()">Send to ESP32</button>
+    <pre id="result"></pre>
+
+    <script>
+        function testPush() {
+            const result = document.getElementById('result');
+            result.textContent = 'Sending...';
+            
+            fetch('http://192.168.1.9:8081/api/pins', {
+                method: 'PUT',
+                headers: {
+                    'Authorization': 'esp32@cydc.local-Blynk-0-0-4ba7c726a0a54cb390065907068d9922',
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify({
+                    pin: 'V5',
+                    value: '999'
+                })
+            })
+            .then(response => response.json())
+            .then(data => {
+                result.textContent = 'Success!\\n' + JSON.stringify(data, null, 2);
+                result.textContent += '\\n\\nCheck ESP32 Serial Monitor for "Receive V5: 999"';
+            })
+            .catch(error => {
+                result.textContent = 'Error: ' + error;
+            });
+        }
+    </script>
+</body>
+</html>

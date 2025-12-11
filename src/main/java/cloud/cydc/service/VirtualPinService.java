@@ -1,5 +1,6 @@
 package cloud.cydc.service;
 
+import cloud.cydc.blynk.BlynkProtocolHandler;
 import cloud.cydc.cache.RedisClientManager;
 import cloud.cydc.websocket.WebSocketFrameHandler;
 import io.lettuce.core.api.sync.RedisCommands;
@@ -95,8 +96,12 @@ public class VirtualPinService {
     public void setPinValueWithBroadcast(String userId, String deviceId, int pinNum, String value) {
         long devId = Long.parseLong(deviceId);
         setPinValue(devId, pinNum, value);
+        
         // Broadcast pin update to all subscribed WebSocket clients
         WebSocketFrameHandler.broadcastPinUpdate(userId, deviceId, "V" + pinNum, value);
+        
+        // Push to connected ESP32 via Blynk protocol
+        BlynkProtocolHandler.sendHardwareCommand(devId, pinNum, value);
     }
 
     public void setPinValueWithBroadcastAndRawData(String userId, long dashId, long devId, int pinNum, String value) {

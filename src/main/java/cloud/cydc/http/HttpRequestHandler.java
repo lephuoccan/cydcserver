@@ -52,6 +52,17 @@ public class HttpRequestHandler extends SimpleChannelInboundHandler<FullHttpRequ
             String uri = fullUri.contains("?") ? fullUri.substring(0, fullUri.indexOf("?")) : fullUri;
             String method = req.method().name();
             System.out.println("[HttpHandler] " + method + " " + fullUri);
+            
+            // Handle CORS preflight
+            if ("OPTIONS".equals(method)) {
+                FullHttpResponse resp = new DefaultFullHttpResponse(HTTP_1_1, OK);
+                resp.headers().set("Access-Control-Allow-Origin", "*");
+                resp.headers().set("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS");
+                resp.headers().set("Access-Control-Allow-Headers", "Content-Type, Authorization");
+                resp.headers().setInt(HttpHeaderNames.CONTENT_LENGTH, 0);
+                ctx.writeAndFlush(resp);
+                return;
+            }
 
             // User APIs
             if (uri.equals("/api/register") && "POST".equals(method)) {
@@ -259,7 +270,9 @@ public class HttpRequestHandler extends SimpleChannelInboundHandler<FullHttpRequ
                 if (tokenInfo != null) {
                     long devId = Long.parseLong(tokenInfo[2]);
                     String userId = tokenInfo[0];
+                    System.out.println("[HttpHandler] Calling setPinValueWithBroadcast: userId=" + userId + ", devId=" + devId + ", pin=" + pinNum + ", value=" + value);
                     pinService.setPinValueWithBroadcast(userId, String.valueOf(devId), pinNum, value);
+                    System.out.println("[HttpHandler] setPinValueWithBroadcast completed successfully");
                 } else {
                     writeJson(ctx, BAD_REQUEST, "{\"error\":\"invalid token format\"}", req);
                     return;
@@ -417,6 +430,9 @@ public class HttpRequestHandler extends SimpleChannelInboundHandler<FullHttpRequ
     private void writeJson(ChannelHandlerContext ctx, HttpResponseStatus status, String body, FullHttpRequest req) {
         FullHttpResponse resp = new DefaultFullHttpResponse(HTTP_1_1, status, Unpooled.copiedBuffer(body, StandardCharsets.UTF_8));
         resp.headers().set(HttpHeaderNames.CONTENT_TYPE, "application/json; charset=UTF-8");
+        resp.headers().set("Access-Control-Allow-Origin", "*");
+        resp.headers().set("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS");
+        resp.headers().set("Access-Control-Allow-Headers", "Content-Type, Authorization");
         resp.headers().setInt(HttpHeaderNames.CONTENT_LENGTH, resp.content().readableBytes());
         if (!HttpUtil.isKeepAlive(req)) {
             ctx.writeAndFlush(resp).addListener(ChannelFutureListener.CLOSE);
