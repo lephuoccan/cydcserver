@@ -44,6 +44,24 @@ public class RawDataService {
             return "[]";
         }
     }
+    
+    /**
+     * Delete pin data older than the specified timestamp.
+     * @param cutoffTimestamp Delete all records where ts < cutoffTimestamp
+     * @return Number of records deleted
+     */
+    public int deleteOldData(long cutoffTimestamp) {
+        if (!enabled) return 0;
+
+        try {
+            int deleted = dao.deleteOlderThan(cutoffTimestamp);
+            log.info("Deleted {} pin data records older than timestamp {}", deleted, cutoffTimestamp);
+            return deleted;
+        } catch (Exception e) {
+            log.error("Error deleting old pin data", e);
+            return 0;
+        }
+    }
 
     public boolean isEnabled() {
         return enabled;

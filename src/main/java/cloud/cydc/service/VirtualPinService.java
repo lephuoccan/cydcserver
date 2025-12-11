@@ -17,6 +17,8 @@ public class VirtualPinService {
     private static final int DEVICE_INACTIVE_THRESHOLD_SEC = 15; // 5 minutes
     private static final int DEVICE_CLEANUP_THRESHOLD_SEC = 60; // 30 minutes
     private static final int SYNC_BATCH_SIZE = 100;
+    private static final long DATA_RETENTION_DAYS = 90; // 3 months = 90 days
+    private static final long DATA_RETENTION_MS = DATA_RETENTION_DAYS * 24 * 60 * 60 * 1000L;
     
     private final RawDataService rawDataService;
     private final ScheduledExecutorService scheduler;
@@ -51,7 +53,10 @@ public class VirtualPinService {
         // Định kỳ cleanup các device không hoạt động (mỗi 5 phút)
         scheduler.scheduleAtFixedRate(this::cleanupInactiveDevices, 300, 300, TimeUnit.SECONDS);
         
-        log.info("VirtualPinService initialized with auto-sync and cleanup");
+        // Định kỳ xóa dữ liệu pin cũ hơn 3 tháng (mỗi ngày lúc 2:00 AM)
+        scheduler.scheduleAtFixedRate(this::cleanupOldPinData, calculateInitialDelay(), 24 * 60 * 60, TimeUnit.SECONDS);
+        
+        log.info("VirtualPinService initialized with auto-sync, cleanup, and 90-day data retention");
     }
 
     public VirtualPinService() {
@@ -227,6 +232,50 @@ public class VirtualPinService {
             }
         } catch (Exception e) {
             log.error("Error during device cleanup: {}", e.getMessage(), e);
+        }
+    }
+    
+    /**
+     * Calculate initial delay to run cleanup at 2:00 AM
+     * @return seconds until next 2:00 AM
+     */
+    private long calculateInitialDelay() {
+        java.time.LocalDateTime now = java.time.LocalDateTime.now();
+        java.time.LocalDateTime nextRun = now.withHour(2).withMinute(0).withSecond(0).withNano(0);
+        
+        // If already past 2:00 AM today, schedule for tomorrow
+        if (now.compareTo(nextRun) > 0) {
+            nextRun = nextRun.plusDays(1);
+        }
+        
+        long delay = java.time.Duration.between(now, nextRun).getSeconds();
+        log.info("Old pin data cleanup scheduled to run at 2:00 AM (initial delay: {} seconds / {} hours)", 
+                 delay, delay / 3600);
+        return delay;
+    }
+    
+    /**
+     * Delete pin data older than 3 months from database
+     */
+    private void cleanupOldPinData() {
+        if (rawDataService == null || !rawDataService.isEnabled()) {
+            return;
+        }
+        
+        try {
+            long cutoffTime = System.currentTimeMillis() - DATA_RETENTION_MS;
+            log.info("Starting cleanup of pin data older than {} days (before timestamp: {})", 
+                     DATA_RETENTION_DAYS, cutoffTime);
+            
+            int deleted = rawDataService.deleteOldData(cutoffTime);
+            
+            if (deleted > 0) {
+                log.info("Deleted {} old pin data records (older than {} days)", deleted, DATA_RETENTION_DAYS);
+            } else {
+                log.debug("No old pin data to delete");
+            }
+        } catch (Exception e) {
+            log.error("Error during old pin data cleanup", e);
         }
     }
 
