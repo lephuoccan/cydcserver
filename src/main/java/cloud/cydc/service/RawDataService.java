@@ -62,6 +62,24 @@ public class RawDataService {
             return 0;
         }
     }
+    
+    /**
+     * Delete old pin data but keep the latest record for each device/pin combination
+     * @param cutoffTimestamp Delete records older than this, but keep latest per device/pin
+     * @return Number of records deleted
+     */
+    public int deleteOldDataKeepLatest(long cutoffTimestamp) {
+        if (!enabled) return 0;
+
+        try {
+            int deleted = dao.deleteOlderThanKeepLatest(cutoffTimestamp);
+            log.info("Deleted {} old pin data records (kept latest per device/pin)", deleted);
+            return deleted;
+        } catch (Exception e) {
+            log.error("Error deleting old pin data with keep latest", e);
+            return 0;
+        }
+    }
 
     public boolean isEnabled() {
         return enabled;

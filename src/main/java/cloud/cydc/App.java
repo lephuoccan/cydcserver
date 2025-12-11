@@ -71,7 +71,11 @@ public class App
             log.info("Raw data storage enabled");
         }
         
-        var pinService = new VirtualPinService(rawDataService);
+        // Read sync configuration
+        int syncIntervalSeconds = Integer.parseInt(cfg.get("pin.sync.interval.seconds", "10"));
+        int syncThreshold = Integer.parseInt(cfg.get("pin.sync.threshold", "100"));
+        
+        var pinService = new VirtualPinService(rawDataService, syncIntervalSeconds, syncThreshold);
         var httpServer = new HttpServer(httpPort, usersService, dashboardService, deviceInfoService, pinService);
         httpServer.start();
 

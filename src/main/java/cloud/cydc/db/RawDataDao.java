@@ -93,4 +93,24 @@ public class RawDataDao {
             throw new RuntimeException(e);
         }
     }
+    
+    /**
+     * Delete old raw data but keep the latest record for each device/pin combination.
+     * This ensures we always have at least one record per device/pin.
+     */
+    public int deleteOlderThanKeepLatest(long ts) {
+        // Delete old records except the most recent one for each devid/pin combination
+        String sql = "DELETE FROM raw_data " +
+                     "WHERE ts < ? " +
+                     "AND id NOT IN (" +
+                     "  SELECT MAX(id) FROM raw_data GROUP BY devid, pin" +
+                     ")";
+        try (Connection c = ds.getConnection(); PreparedStatement ps = c.prepareStatement(sql)) {
+            ps.setLong(1, ts);
+            return ps.executeUpdate();
+        } catch (SQLException e) {
+            log.error("Error deleting old raw data with keep latest", e);
+            throw new RuntimeException(e);
+        }
+    }
 }

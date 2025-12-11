@@ -18,11 +18,15 @@ public class VirtualPinService {
     private static final int DEVICE_CLEANUP_THRESHOLD_SEC = 60; // 30 minutes
     private static final int SYNC_BATCH_SIZE = 100;
     private static final long DATA_RETENTION_DAYS = 90; // 3 months = 90 days
-    private static final long DATA_RETENTION_MS = DATA_RETENTION_DAYS * 24 * 60 * 60 * 1000L;
+    private static final long DATA_RETENTION_MS = 60 * 1000L; // TEST: 1 minute for testing
     
     private final RawDataService rawDataService;
     private final ScheduledExecutorService scheduler;
+    private final ExecutorService syncExecutor; // Dedicated thread pool for DB sync
     private final ConcurrentHashMap<Long, Queue<PinUpdate>> pendingWrites;
+    private final int syncIntervalSeconds;
+    private final int syncThreshold;
+    private volatile boolean isSyncing = false; // Prevent concurrent syncs
     
     private static class PinUpdate {
         final String userId;
@@ -42,25 +46,33 @@ public class VirtualPinService {
         }
     }
 
-    public VirtualPinService(RawDataService rawDataService) {
+    public VirtualPinService(RawDataService rawDataService, int syncIntervalSeconds, int syncThreshold) {
         this.rawDataService = rawDataService;
         this.pendingWrites = new ConcurrentHashMap<>();
         this.scheduler = Executors.newScheduledThreadPool(2);
+        this.syncExecutor = Executors.newSingleThreadExecutor(); // Single thread for DB sync to avoid race conditions
+        this.syncIntervalSeconds = syncIntervalSeconds;
+        this.syncThreshold = syncThreshold;
         
-        // Định kỳ sync dữ liệu từ Redis vào DB (mỗi 30s)
-        scheduler.scheduleAtFixedRate(this::syncPendingWritesToDB, 30, 30, TimeUnit.SECONDS);
+        // Định kỳ sync dữ liệu từ Redis vào DB (theo config)
+        scheduler.scheduleAtFixedRate(this::syncPendingWritesToDB, syncIntervalSeconds, syncIntervalSeconds, TimeUnit.SECONDS);
         
         // Định kỳ cleanup các device không hoạt động (mỗi 5 phút)
         scheduler.scheduleAtFixedRate(this::cleanupInactiveDevices, 300, 300, TimeUnit.SECONDS);
         
-        // Định kỳ xóa dữ liệu pin cũ hơn 3 tháng (mỗi ngày lúc 2:00 AM)
-        scheduler.scheduleAtFixedRate(this::cleanupOldPinData, calculateInitialDelay(), 24 * 60 * 60, TimeUnit.SECONDS);
+        // TEST: Xóa dữ liệu pin cũ hơn 1 phút (chạy ngay sau 10 giây, lặp lại mỗi 30 giây)
+        scheduler.scheduleAtFixedRate(this::cleanupOldPinData, 10, 30, TimeUnit.SECONDS);
         
-        log.info("VirtualPinService initialized with auto-sync, cleanup, and 90-day data retention");
+        log.info("VirtualPinService initialized: sync interval={}s, threshold={} writes, 1-MINUTE test data retention", 
+                 syncIntervalSeconds, syncThreshold);
+    }
+
+    public VirtualPinService(RawDataService rawDataService) {
+        this(rawDataService, 30, 100); // Default: 30s interval, 100 writes threshold
     }
 
     public VirtualPinService() {
-        this(null); // For backward compatibility
+        this(null, 30, 100); // For backward compatibility
     }
     
     /**
@@ -113,6 +125,9 @@ public class VirtualPinService {
             PinUpdate update = new PinUpdate(userId, 0, devId, pinNum, value);
             pendingWrites.computeIfAbsent(devId, k -> new ConcurrentLinkedQueue<>()).offer(update);
             log.debug("Queued pin update for DB sync: device={}, pin=V{}, value={}", devId, pinNum, value);
+            
+            // Auto-sync nếu đạt threshold
+            checkAndAutoSync();
         }
         
         touchDeviceActivity(devId);
@@ -129,17 +144,61 @@ public class VirtualPinService {
         if (rawDataService != null && rawDataService.isEnabled()) {
             PinUpdate update = new PinUpdate(userId, dashId, devId, pinNum, value);
             pendingWrites.computeIfAbsent(devId, k -> new ConcurrentLinkedQueue<>()).offer(update);
+            
+            // Auto-sync nếu đạt threshold
+            checkAndAutoSync();
         }
         
         touchDeviceActivity(devId);
     }
     
     /**
+     * Kiểm tra và tự động sync nếu đạt threshold (NON-BLOCKING)
+     * Chạy trong thread riêng để không ảnh hưởng ESP32 read/write
+     */
+    private void checkAndAutoSync() {
+        int totalPending = 0;
+        for (Queue<PinUpdate> queue : pendingWrites.values()) {
+            totalPending += queue.size();
+        }
+        
+        if (totalPending >= syncThreshold) {
+            if (!isSyncing) {
+                log.info("Auto-sync triggered: {} pending writes >= {} threshold", totalPending, syncThreshold);
+                triggerAsyncSync();
+            } else {
+                log.debug("Sync already in progress, skipping auto-sync trigger");
+            }
+        }
+    }
+    
+    /**
+     * Trigger sync trong thread riêng (NON-BLOCKING)
+     */
+    private void triggerAsyncSync() {
+        syncExecutor.submit(() -> {
+            try {
+                syncPendingWritesToDB();
+            } catch (Exception e) {
+                log.error("Error in async sync", e);
+            }
+        });
+    }
+    
+    /**
      * Sync batch các pin updates vào database
+     * CRITICAL: Method này chạy trong syncExecutor thread, KHÔNG BAO GIỜ block ESP32 operations
      */
     private void syncPendingWritesToDB() {
         if (rawDataService == null || !rawDataService.isEnabled()) return;
         
+        // Prevent concurrent syncs
+        if (isSyncing) {
+            log.debug("Sync already in progress, skipping");
+            return;
+        }
+        
+        isSyncing = true;
         try {
             int totalSynced = 0;
             List<Long> emptyDevices = new ArrayList<>();
@@ -184,6 +243,8 @@ public class VirtualPinService {
             }
         } catch (Exception e) {
             log.error("Error during pin data sync: {}", e.getMessage(), e);
+        } finally {
+            isSyncing = false;
         }
     }
     
@@ -255,7 +316,7 @@ public class VirtualPinService {
     }
     
     /**
-     * Delete pin data older than 3 months from database
+     * Delete pin data older than 1 minute from database, keep latest record per device/pin
      */
     private void cleanupOldPinData() {
         if (rawDataService == null || !rawDataService.isEnabled()) {
@@ -264,15 +325,14 @@ public class VirtualPinService {
         
         try {
             long cutoffTime = System.currentTimeMillis() - DATA_RETENTION_MS;
-            log.info("Starting cleanup of pin data older than {} days (before timestamp: {})", 
-                     DATA_RETENTION_DAYS, cutoffTime);
+            log.info("TEST: Starting cleanup of pin data older than 1 minute (before timestamp: {})", cutoffTime);
             
-            int deleted = rawDataService.deleteOldData(cutoffTime);
+            int deleted = rawDataService.deleteOldDataKeepLatest(cutoffTime);
             
             if (deleted > 0) {
-                log.info("Deleted {} old pin data records (older than {} days)", deleted, DATA_RETENTION_DAYS);
+                log.info("TEST: Deleted {} old pin data records (older than 1 minute, kept latest per device/pin)", deleted);
             } else {
-                log.debug("No old pin data to delete");
+                log.debug("TEST: No old pin data to delete");
             }
         } catch (Exception e) {
             log.error("Error during old pin data cleanup", e);
@@ -321,10 +381,25 @@ public class VirtualPinService {
     
     /**
      * Force sync ngay lập tức (để gọi khi shutdown)
+     * Wait for completion to ensure data is saved before shutdown
      */
     public void forceSync() {
         log.info("Force syncing all pending pin updates...");
-        syncPendingWritesToDB();
+        
+        // Submit sync task and wait for completion
+        Future<?> syncFuture = syncExecutor.submit(() -> {
+            try {
+                syncPendingWritesToDB();
+            } catch (Exception e) {
+                log.error("Error in force sync", e);
+            }
+        });
+        
+        try {
+            syncFuture.get(30, TimeUnit.SECONDS); // Wait max 30 seconds
+        } catch (Exception e) {
+            log.error("Force sync timeout or failed", e);
+        }
     }
     
     /**
@@ -333,13 +408,21 @@ public class VirtualPinService {
     public void shutdown() {
         log.info("Shutting down VirtualPinService...");
         forceSync();
+        
+        // Shutdown schedulers
         scheduler.shutdown();
+        syncExecutor.shutdown();
+        
         try {
             if (!scheduler.awaitTermination(10, TimeUnit.SECONDS)) {
                 scheduler.shutdownNow();
             }
+            if (!syncExecutor.awaitTermination(10, TimeUnit.SECONDS)) {
+                syncExecutor.shutdownNow();
+            }
         } catch (InterruptedException e) {
             scheduler.shutdownNow();
+            syncExecutor.shutdownNow();
         }
         log.info("VirtualPinService shutdown complete");
     }
