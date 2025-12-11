@@ -50,6 +50,24 @@ public class DeviceInfoDao {
         return null;
     }
 
+    public long getNextDeviceId(String userId, long dashId) {
+        String sql = "SELECT COALESCE(MAX(devid), -1) + 1 FROM device_info WHERE userid = ? AND dashid = ?";
+        try (Connection c = ds.getConnection(); PreparedStatement ps = c.prepareStatement(sql)) {
+            ps.setString(1, userId);
+            ps.setLong(2, dashId);
+            ResultSet rs = ps.executeQuery();
+            if (rs.next()) {
+                long nextId = rs.getLong(1);
+                rs.close();
+                return nextId;
+            }
+            rs.close();
+        } catch (SQLException e) {
+            throw new RuntimeException(e);
+        }
+        return 0;
+    }
+
     public String findTokenByDevId(long devId) {
         String sql = "SELECT token FROM device_info WHERE devid = ?";
         try (Connection c = ds.getConnection(); PreparedStatement ps = c.prepareStatement(sql)) {

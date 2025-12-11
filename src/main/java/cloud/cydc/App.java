@@ -1,5 +1,6 @@
 package cloud.cydc;
 
+import cloud.cydc.blynk.BlynkServer;
 import cloud.cydc.cache.RedisClientManager;
 import cloud.cydc.config.Config;
 import cloud.cydc.db.DashboardDao;
@@ -15,6 +16,7 @@ import cloud.cydc.service.DeviceService;
 import cloud.cydc.service.RawDataService;
 import cloud.cydc.service.UsersService;
 import cloud.cydc.service.VirtualPinService;
+import cloud.cydc.util.TokenValidator;
 import cloud.cydc.http.HttpServer;
 import cloud.cydc.websocket.WebSocketServer;
 import cloud.cydc.websocket.WebSocketFrameHandler;
@@ -73,6 +75,12 @@ public class App
         var httpServer = new HttpServer(httpPort, usersService, dashboardService, deviceInfoService, pinService);
         httpServer.start();
 
+        // start Blynk protocol server for ESP32 devices (port 8442)
+        int blynkPort = Integer.parseInt(cfg.get("server.blynk.port", "8442"));
+        TokenValidator tokenValidator = new TokenValidator(deviceInfoService);
+        BlynkServer blynkServer = new BlynkServer(blynkPort, deviceInfoService, pinService, tokenValidator);
+        blynkServer.start();
+
         // start WebSocket server for app clients (with heartbeat and pin updates)
         int wsPort = Integer.parseInt(cfg.get("server.websocket.port", "9001"));
         WebSocketFrameHandler wsFrameHandler = new WebSocketFrameHandler();
@@ -87,6 +95,7 @@ public class App
                 
                 server.stop();
                 httpServer.stop();
+                blynkServer.stop();
                 wsServer.stop();
                 RedisClientManager.close();
                 PostgresDataSource.close();
@@ -97,8 +106,8 @@ public class App
             }
         }, "cydc-shutdown"));
 
-        System.out.println("CYDConnect Server running on port " + port + " (http:" + httpPort + ", websocket:" + wsPort + ")");
-        log.info("Servers started (tcp:{} http:{} ws:{})", port, httpPort, wsPort);
+        System.out.println("CYDConnect Server running on port " + port + " (http:" + httpPort + ", blynk:" + blynkPort + ", websocket:" + wsPort + ")");
+        log.info("Servers started (tcp:{} http:{} blynk:{} ws:{})", port, httpPort, blynkPort, wsPort);
         shutdownLatch.await();
     }
 

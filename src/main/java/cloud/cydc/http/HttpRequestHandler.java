@@ -156,15 +156,24 @@ public class HttpRequestHandler extends SimpleChannelInboundHandler<FullHttpRequ
                 req.content().readBytes(bytes);
                 DeviceInfo d = mapper.readValue(bytes, DeviceInfo.class);
                 
-                // Generate token if not provided
-                if (d.getToken() == null || d.getToken().isEmpty()) {
-                    String randomPart = deviceService.generateNewToken();
-                    String fullToken = userId + "-" + dashId + "-" + d.getId() + "-" + randomPart;
-                    d = new DeviceInfo(d.getId(), d.getName(), d.getBoardType(), fullToken,
-                        d.getVendor(), d.getConnectionType(), d.getStatus(), d.getDisconnectTime(),
-                        d.getConnectTime(), d.getFirstConnectTime(), d.getDataReceivedAt(),
-                        d.getLastLoggedIP(), d.getHardwareInfo(), d.isUserIcon());
+                // Get next device ID if creating new device (id = 0)
+                long devId = d.getId();
+                if (devId == 0) {
+                    devId = deviceService.getNextDeviceId(userId, dashId);
                 }
+                
+                // Generate token if not provided
+                String token = d.getToken();
+                if (token == null || token.isEmpty()) {
+                    String randomPart = deviceService.generateNewToken();
+                    token = userId + "-" + dashId + "-" + devId + "-" + randomPart;
+                }
+                
+                // Reconstruct device with correct ID and token
+                d = new DeviceInfo(devId, d.getName(), d.getBoardType(), token,
+                    d.getVendor(), d.getConnectionType(), d.getStatus(), d.getDisconnectTime(),
+                    d.getConnectTime(), d.getFirstConnectTime(), d.getDataReceivedAt(),
+                    d.getLastLoggedIP(), d.getHardwareInfo(), d.isUserIcon());
                 
                 deviceService.createOrUpdate(userId, dashId, d);
                 String json = deviceService.findJsonById(userId, dashId, d.getId());

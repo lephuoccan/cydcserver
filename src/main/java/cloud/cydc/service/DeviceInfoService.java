@@ -56,6 +56,10 @@ public class DeviceInfoService {
         return dao.findTokenByDevId(devId);
     }
 
+    public long getNextDeviceId(String userId, long dashId) {
+        return dao.getNextDeviceId(userId, dashId);
+    }
+
     public String findTokenByDeviceId(String userId, long dashId, long devId) {
         System.out.println("[DeviceInfoService] findTokenByDeviceId - userId: " + userId + ", dashId: " + dashId + ", devId: " + devId);
         String json = findJsonById(userId, dashId, devId);

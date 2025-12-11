@@ -13,6 +13,37 @@ public class TokenValidator {
     }
 
     /**
+     * Extracts token information: [userId, dashId, deviceId, randomPart]
+     * Returns null if token format is invalid
+     */
+    public String[] extractTokenInfo(String token) {
+        if (token == null || token.isEmpty()) {
+            return null;
+        }
+
+        try {
+            String[] parts = token.split("-");
+            if (parts.length < 4) {
+                return null;
+            }
+
+            // Last part is the random token portion
+            String randomPart = parts[parts.length - 1];
+            // Second to last is deviceId
+            String devId = parts[parts.length - 2];
+            // Third to last is dashId
+            String dashId = parts[parts.length - 3];
+            // Everything before that is userId
+            String userId = String.join("-", java.util.Arrays.copyOf(parts, parts.length - 3));
+
+            return new String[]{userId, dashId, devId, randomPart};
+        } catch (Exception e) {
+            System.out.println("[TokenValidator] Error extracting token info: " + e.getMessage());
+            return null;
+        }
+    }
+
+    /**
      * Validates a device token. Returns true if valid, false otherwise.
      * Token format: userId-dashId-deviceId-randomPart (all parts required)
      * Note: userId can contain hyphens, so we need to parse from the end
@@ -57,44 +88,5 @@ public class TokenValidator {
             e.printStackTrace();
             return false;
         }
-    }
-
-    /**
-     * Extracts userId, dashId, deviceId from token.
-     * Returns array [userId, dashId, deviceId] or null if invalid.
-     * Note: userId can contain hyphens, so we parse from the end
-     */
-    public String[] extractTokenInfo(String token) {
-        if (token == null || token.isEmpty()) {
-            return null;
-        }
-
-        try {
-            String[] parts = token.split("-");
-            if (parts.length < 4) {
-                return null;
-            }
-
-            // Last part is the random token portion
-            String randomPart = parts[parts.length - 1];
-            // Second to last is deviceId
-            long devId = Long.parseLong(parts[parts.length - 2]);
-            // Third to last is dashId
-            long dashId = Long.parseLong(parts[parts.length - 3]);
-            // Everything before that is userId
-            String userId = String.join("-", java.util.Arrays.copyOf(parts, parts.length - 3));
-
-            // Reconstruct expected token format
-            String expectedToken = userId + "-" + dashId + "-" + devId + "-" + randomPart;
-            
-            // Verify token matches stored token for device
-            String storedToken = deviceService.findTokenByDeviceId(userId, dashId, devId);
-            if (storedToken != null && storedToken.equals(expectedToken)) {
-                return new String[]{userId, String.valueOf(dashId), String.valueOf(devId)};
-            }
-        } catch (Exception e) {
-            // Fall through
-        }
-        return null;
     }
 }
